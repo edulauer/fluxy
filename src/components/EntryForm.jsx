@@ -11,12 +11,14 @@ const emptyForm = {
   category: "Vendas",
   store: "Geral",
   employeeName: "",
-  supplier: ""
+  supplier: "",
+  recurrence: 1,
+  intervalDays: ""
 };
 
 const stores = ["Geral", "Loja 1", "Loja 2"];
 
-export default function EntryForm({ categories, entry, onCancel, onSave }) {
+export default function EntryForm({ categories, suppliers, entry, onCancel, onSave }) {
   const [form, setForm] = useState(emptyForm);
   const availableCategories = useMemo(() => categories[form.type] || [], [categories, form.type]);
 
@@ -32,7 +34,9 @@ export default function EntryForm({ categories, entry, onCancel, onSave }) {
         category: entry.category,
         store: entry.store || "Geral",
         employeeName: entry.employeeName || "",
-        supplier: entry.supplier || ""
+        supplier: entry.supplier || "",
+        recurrence: 1,
+        intervalDays: ""
       });
     }
   }, [entry]);
@@ -54,7 +58,9 @@ export default function EntryForm({ categories, entry, onCancel, onSave }) {
       dueDate: type === "expense" ? current.dueDate : "",
       paymentDate: type === "expense" ? current.paymentDate : "",
       employeeName: type === "expense" ? current.employeeName : "",
-      supplier: type === "expense" ? current.supplier : ""
+      supplier: type === "expense" ? current.supplier : "",
+      recurrence: type === "expense" ? current.recurrence : 1,
+      intervalDays: type === "expense" ? current.intervalDays : ""
     }));
   }
 
@@ -169,14 +175,49 @@ export default function EntryForm({ categories, entry, onCancel, onSave }) {
 
               <label>
                 <span>Fornecedor</span>
-                <input
-                  maxLength="80"
+                <select
                   name="supplier"
                   onChange={(event) => updateField("supplier", event.target.value)}
-                  placeholder="Opcional"
                   value={form.supplier}
-                />
+                >
+                  <option value="">Sem fornecedor</option>
+                  {suppliers.map((supplier) => (
+                    <option key={supplier.id} value={supplier.name}>
+                      {supplier.name}
+                    </option>
+                  ))}
+                </select>
               </label>
+
+              {!entry && (
+                <>
+                  <label>
+                    <span>Recorrência</span>
+                    <input
+                      max="12"
+                      min="1"
+                      name="recurrence"
+                      onChange={(event) => updateField("recurrence", event.target.value)}
+                      required
+                      type="number"
+                      value={form.recurrence}
+                    />
+                  </label>
+
+                  <label>
+                    <span>Intervalo (dias)</span>
+                    <input
+                      min="1"
+                      name="intervalDays"
+                      onChange={(event) => updateField("intervalDays", event.target.value)}
+                      placeholder="Ex: 30"
+                      required={Number(form.recurrence) > 1}
+                      type="number"
+                      value={form.intervalDays}
+                    />
+                  </label>
+                </>
+              )}
             </>
           )}
         </div>

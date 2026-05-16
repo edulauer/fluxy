@@ -144,6 +144,7 @@ button:disabled {
 .entry-panel,
 .records-section,
 .category-page,
+.supplier-page,
 .pie-dashboard,
 .payable-section {
   background: #ffffff;
@@ -527,6 +528,7 @@ button:focus-visible {
 
 .records-section,
 .category-page,
+.supplier-page,
 .payable-section {
   display: grid;
   gap: 14px;
@@ -576,9 +578,40 @@ button:focus-visible {
   grid-column: 2;
 }
 
-.category-form {
+.category-form,
+.supplier-form {
   display: grid;
   gap: 12px;
+}
+
+.supplier-list {
+  display: grid;
+  gap: 8px;
+}
+
+.supplier-row {
+  align-items: center;
+  border: 1px solid #e0e6e2;
+  border-left: 5px solid #c43b3b;
+  border-radius: 8px;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  min-height: 46px;
+  padding: 8px 8px 8px 12px;
+}
+
+.supplier-row button {
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid #dbe3df;
+  border-radius: 8px;
+  color: #52645a;
+  display: inline-flex;
+  height: 38px;
+  justify-content: center;
+  padding: 0;
+  width: 38px;
 }
 
 .inline-message {
@@ -759,6 +792,7 @@ button:focus-visible {
   .entry-panel,
   .dashboard,
   .records-section,
+  .supplier-page,
   .pie-dashboard,
   .payable-section {
     padding: 18px;
@@ -802,6 +836,11 @@ button:focus-visible {
   .category-form {
     align-items: end;
     grid-template-columns: 240px 1fr 240px 190px;
+  }
+
+  .supplier-form {
+    align-items: end;
+    grid-template-columns: 1fr 220px;
   }
 
   .category-columns {

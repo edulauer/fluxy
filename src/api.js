@@ -44,6 +44,10 @@ export function logout() {
   localStorage.removeItem(tokenKey);
 }
 
+export function getConfig() {
+  return request("/api/config");
+}
+
 export function getEntries(filters) {
   const params = new URLSearchParams(filters);
   return request(`/api/entries?${params.toString()}`);
@@ -64,6 +68,22 @@ export function getCategorySummary(month) {
 
 export function getAccountsPayable() {
   return request("/api/accounts-payable");
+}
+
+export function getSuppliers() {
+  return request("/api/suppliers");
+}
+
+export function createSupplier(supplier) {
+  return request("/api/suppliers", {
+    method: "POST",
+    headers,
+    body: JSON.stringify(supplier)
+  });
+}
+
+export function deleteSupplier(id) {
+  return request(`/api/suppliers/${id}`, { method: "DELETE" });
 }
 
 export function createCategory(category) {

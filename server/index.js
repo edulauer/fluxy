@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import express from "express";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadEnv } from "./env.js";
+import { loadEnv, readEnvFile } from "./env.js";
 import { initDatabase } from "./storage.js";
 
 loadEnv();
@@ -53,6 +53,7 @@ function parseEntry(payload) {
   if (paymentDate && !/^\d{4}-\d{2}-\d{2}$/.test(paymentDate)) return { error: "Data de pagamento invalida." };
   if (description.length < 2) return { error: "Descricao muito curta." };
   if (category.length < 2) return { error: "Categoria invalida." };
+  if (supplier && !db.prepare("SELECT id FROM suppliers WHERE name = ?").get(supplier)) return { error: "Fornecedor invalido." };
 
   return {
     data: {
@@ -70,6 +71,21 @@ function parseEntry(payload) {
   };
 }
 
+function parseRecurrence(payload) {
+  const recurrence = Number(payload.recurrence || 1);
+  const intervalDays = Number(payload.intervalDays || 0);
+
+  if (!Number.isInteger(recurrence) || recurrence < 1 || recurrence > 12) {
+    return { error: "Recorrencia deve ser um numero entre 1 e 12." };
+  }
+
+  if (recurrence > 1 && (!Number.isInteger(intervalDays) || intervalDays < 1)) {
+    return { error: "Intervalo deve ser informado em dias quando a recorrencia for maior que 1." };
+  }
+
+  return { data: { recurrence, intervalDays } };
+}
+
 function parseCategory(payload) {
   const type = payload.type === "expense" ? "expense" : payload.type === "income" ? "income" : null;
   const name = String(payload.name || "").trim();
@@ -81,6 +97,15 @@ function parseCategory(payload) {
   if (!categorySubtypes[type]?.includes(categorySubtype)) return { error: "Tipo da categoria invalido." };
 
   return { data: { type, name, categorySubtype } };
+}
+
+function parseSupplier(payload) {
+  const name = String(payload.name || "").trim();
+
+  if (name.length < 2) return { error: "Nome do fornecedor muito curto." };
+  if (name.length > 80) return { error: "Nome do fornecedor muito longo." };
+
+  return { data: { name } };
 }
 
 function getGroupedCategories() {
@@ -99,8 +124,22 @@ function parseMonth(value) {
   return /^\d{4}-\d{2}$/.test(month) ? month : new Date().toISOString().slice(0, 7);
 }
 
+function addDays(date, days) {
+  if (!date) return null;
+  const next = new Date(`${date}T12:00:00Z`);
+  next.setUTCDate(next.getUTCDate() + days);
+  return next.toISOString().slice(0, 10);
+}
+
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true });
+});
+
+app.get("/api/config", (_req, res) => {
+  const env = readEnvFile();
+  res.json({
+    companyName: env.APP_COMPANY_NAME || process.env.APP_COMPANY_NAME || "Fluxo Simples"
+  });
 });
 
 app.post("/api/login", (req, res) => {
@@ -129,6 +168,39 @@ app.get("/api/categories/list", (_req, res) => {
     .prepare("SELECT id, type, name, category_subtype as categorySubtype, created_at as createdAt FROM categories ORDER BY type DESC, name ASC")
     .all();
   res.json(rows);
+});
+
+app.get("/api/suppliers", (_req, res) => {
+  const rows = db.prepare("SELECT id, name, created_at as createdAt FROM suppliers ORDER BY name ASC").all();
+  res.json(rows);
+});
+
+app.post("/api/suppliers", (req, res) => {
+  const parsed = parseSupplier(req.body);
+  if (parsed.error) return res.status(400).json({ error: parsed.error });
+
+  try {
+    const result = db.prepare("INSERT INTO suppliers (name) VALUES (@name)").run(parsed.data);
+    const supplier = db.prepare("SELECT id, name, created_at as createdAt FROM suppliers WHERE id = ?").get(result.lastInsertRowid);
+    res.status(201).json(supplier);
+  } catch (err) {
+    if (err.code === "SQLITE_CONSTRAINT_UNIQUE") {
+      return res.status(409).json({ error: "Fornecedor ja cadastrado." });
+    }
+    throw err;
+  }
+});
+
+app.delete("/api/suppliers/:id", (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: "ID invalido." });
+
+  const supplier = db.prepare("SELECT id, name FROM suppliers WHERE id = ?").get(id);
+  if (!supplier) return res.status(404).json({ error: "Fornecedor nao encontrado." });
+
+  db.prepare("UPDATE entries SET supplier = '' WHERE supplier = ?").run(supplier.name);
+  db.prepare("DELETE FROM suppliers WHERE id = ?").run(id);
+  res.status(204).send();
 });
 
 app.post("/api/categories", (req, res) => {
@@ -273,39 +345,56 @@ app.get("/api/entries", (req, res) => {
 app.post("/api/entries", (req, res) => {
   const parsed = parseEntry(req.body);
   if (parsed.error) return res.status(400).json({ error: parsed.error });
+  const recurrence = parsed.data.type === "expense" ? parseRecurrence(req.body) : { data: { recurrence: 1, intervalDays: 0 } };
+  if (recurrence.error) return res.status(400).json({ error: recurrence.error });
 
-  const result = db
-    .prepare(
-      `
-        INSERT INTO entries (
-          type,
-          value,
-          date,
-          description,
-          category,
-          store,
-          due_date,
-          payment_date,
-          employee_name,
-          supplier
-        )
-        VALUES (
-          @type,
-          @value,
-          @date,
-          @description,
-          @category,
-          @store,
-          @dueDate,
-          @paymentDate,
-          @employeeName,
-          @supplier
-        )
-      `
-    )
-    .run(parsed.data);
+  const insert = db.prepare(
+    `
+      INSERT INTO entries (
+        type,
+        value,
+        date,
+        description,
+        category,
+        store,
+        due_date,
+        payment_date,
+        employee_name,
+        supplier
+      )
+      VALUES (
+        @type,
+        @value,
+        @date,
+        @description,
+        @category,
+        @store,
+        @dueDate,
+        @paymentDate,
+        @employeeName,
+        @supplier
+      )
+    `
+  );
 
-  const entry = db
+  const createEntries = db.transaction((entry, options) => {
+    const ids = [];
+    for (let index = 0; index < options.recurrence; index += 1) {
+      const offset = index * options.intervalDays;
+      const result = insert.run({
+        ...entry,
+        date: addDays(entry.date, offset),
+        dueDate: addDays(entry.dueDate, offset),
+        paymentDate: addDays(entry.paymentDate, offset)
+      });
+      ids.push(result.lastInsertRowid);
+    }
+    return ids;
+  });
+
+  const ids = createEntries(parsed.data, recurrence.data);
+
+  const entries = db
     .prepare(
       `
         SELECT
@@ -322,11 +411,12 @@ app.post("/api/entries", (req, res) => {
           supplier,
           created_at as createdAt
         FROM entries
-        WHERE id = ?
+        WHERE id IN (${ids.map(() => "?").join(",")})
+        ORDER BY id ASC
       `
     )
-    .get(result.lastInsertRowid);
-  res.status(201).json(entry);
+    .all(...ids);
+  res.status(201).json(recurrence.data.recurrence === 1 ? entries[0] : entries);
 });
 
 app.put("/api/entries/:id", (req, res) => {

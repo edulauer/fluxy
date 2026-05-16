@@ -1,7 +1,7 @@
 import { LockKeyhole } from "lucide-react";
 import { useState } from "react";
 
-export default function Login({ error, onLogin }) {
+export default function Login({ companyName, error, onLogin }) {
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
@@ -20,7 +20,7 @@ export default function Login({ error, onLogin }) {
         </div>
         <div>
           <p className="eyebrow">Mini SaaS financeiro</p>
-          <h1>Fluxo Simples</h1>
+          <h1>{companyName}</h1>
         </div>
 
         <form className="login-form" onSubmit={handleSubmit}>

@@ -30,6 +30,13 @@ mini-finance-saas/
 
 ## Como rodar localmente
 
+A senha padrao e o nome da empresa deve ser configurada em base64 no arquivo `.env`:
+
+```text
+APP_PASSWORD_BASE64=<senhabase64>
+APP_COMPANY_NAME=Nome da Empresa
+```
+
 ```bash
 cd mini-finance-saas
 npm install
@@ -41,11 +48,7 @@ Depois abra:
 - Frontend: `http://localhost:5173`
 - API: `http://localhost:3333/api/health`
 
-A senha padrao deve ser configurada em base64 no arquivo `.env`:
 
-```text
-APP_PASSWORD_BASE64=<senhabase64>
-```
 
 Para gerar a versao de producao:
 

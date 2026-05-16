@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { createEntry, deleteEntry, getAccountsPayable, getCategories, getEntries, getStoredToken, login, logout, updateEntry } from "./api.js";
+import { createEntry, deleteEntry, getAccountsPayable, getCategories, getConfig, getEntries, getStoredToken, getSuppliers, login, logout, updateEntry } from "./api.js";
 import AccountsPayable from "./components/AccountsPayable.jsx";
 import CategoryManager from "./components/CategoryManager.jsx";
 import CategoryPieDashboard from "./components/CategoryPieDashboard.jsx";
@@ -8,6 +8,7 @@ import EntryForm from "./components/EntryForm.jsx";
 import EntryList from "./components/EntryList.jsx";
 import Filters from "./components/Filters.jsx";
 import Login from "./components/Login.jsx";
+import SupplierManager from "./components/SupplierManager.jsx";
 
 const initialFilters = { month: new Date().toISOString().slice(0, 7), type: "all" };
 
@@ -17,9 +18,11 @@ function formatForCsv(value) {
 
 export default function App() {
   const [authenticated, setAuthenticated] = useState(Boolean(getStoredToken()));
+  const [companyName, setCompanyName] = useState("Fluxo Simples");
   const [entries, setEntries] = useState([]);
   const [accountsPayable, setAccountsPayable] = useState([]);
   const [categories, setCategories] = useState({ income: [], expense: [] });
+  const [suppliers, setSuppliers] = useState([]);
   const [filters, setFilters] = useState(initialFilters);
   const [editingEntry, setEditingEntry] = useState(null);
   const [page, setPage] = useState("home");
@@ -31,6 +34,15 @@ export default function App() {
   async function loadCategories() {
     try {
       setCategories(await getCategories());
+      setError("");
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function loadSuppliers() {
+    try {
+      setSuppliers(await getSuppliers());
       setError("");
     } catch (err) {
       setError(err.message);
@@ -68,6 +80,10 @@ export default function App() {
       setLoginError("Sessao expirada. Faca login novamente.");
     }
 
+    getConfig()
+      .then((config) => setCompanyName(config.companyName || "Fluxo Simples"))
+      .catch(() => setCompanyName("Fluxo Simples"));
+
     window.addEventListener("finance:logout", handleLogout);
     return () => window.removeEventListener("finance:logout", handleLogout);
   }, []);
@@ -75,6 +91,7 @@ export default function App() {
   useEffect(() => {
     if (!authenticated) return;
     loadCategories();
+    loadSuppliers();
   }, [authenticated]);
 
   useEffect(() => {
@@ -168,25 +185,48 @@ export default function App() {
     setEntries([]);
     setAccountsPayable([]);
     setCategories({ income: [], expense: [] });
+    setSuppliers([]);
     setPage("home");
     setEditingEntry(null);
   }
 
   if (!authenticated) {
-    return <Login error={loginError} onLogin={handleLogin} />;
+    return <Login companyName={companyName} error={loginError} onLogin={handleLogin} />;
   }
+
+  const pageTitle = {
+    home: companyName,
+    dashboard: "Dashboard",
+    categories: "Categorias",
+    suppliers: "Fornecedores"
+  }[page];
 
   return (
     <main className="app-shell">
       <header className="app-header">
         <div>
           <p className="eyebrow">Mini SaaS financeiro</p>
-          <h1>{page === "home" ? "Fluxo Simples" : "Categorias"}</h1>
+          <h1>{pageTitle}</h1>
         </div>
         <div className="header-actions">
-          <button className="ghost-button" onClick={() => setPage(page === "home" ? "categories" : "home")}>
-            {page === "home" ? "Categorias" : "Voltar"}
-          </button>
+          {page === "home" && (
+            <>
+              <button className="ghost-button" onClick={() => setPage("dashboard")}>
+                Dashboard
+              </button>
+              <button className="ghost-button" onClick={() => setPage("categories")}>
+                Categorias
+              </button>
+              <button className="ghost-button" onClick={() => setPage("suppliers")}>
+                Fornecedores
+              </button>
+            </>
+          )}
+          {page !== "home" && (
+            <button className="ghost-button" onClick={() => setPage("home")}>
+              Voltar
+            </button>
+          )}
           {page === "home" && (
             <button className="ghost-button" onClick={handleExportCsv} disabled={entries.length === 0}>
               CSV
@@ -200,15 +240,18 @@ export default function App() {
 
       {error && <div className="alert">{error}</div>}
 
-      {page === "categories" ? (
+      {page === "dashboard" ? (
+        <CategoryPieDashboard />
+      ) : page === "categories" ? (
         <CategoryManager onChanged={loadCategories} />
+      ) : page === "suppliers" ? (
+        <SupplierManager onChanged={loadSuppliers} />
       ) : (
         <>
           <Dashboard entries={entries} totals={totals} period="month" />
-          <CategoryPieDashboard />
           <AccountsPayable entries={accountsPayable} loading={payableLoading} />
 
-          <EntryForm categories={categories} entry={editingEntry} onCancel={() => setEditingEntry(null)} onSave={handleSave} />
+          <EntryForm categories={categories} suppliers={suppliers} entry={editingEntry} onCancel={() => setEditingEntry(null)} onSave={handleSave} />
 
           <section className="records-section">
             <Filters filters={filters} onChange={setFilters} />

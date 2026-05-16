@@ -26,6 +26,8 @@ const defaultCategories = [
   ["expense", "Outros", "Despesa Variavel"]
 ];
 
+const defaultSuppliers = ["Distribuidora Alfa", "Agencia Beta", "Imobiliaria Central"];
+
 function hasColumn(db, table, column) {
   return db.prepare(`PRAGMA table_info(${table})`).all().some((field) => field.name === column);
 }
@@ -58,6 +60,12 @@ export function initDatabase() {
       category_subtype TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(type, name)
+    );
+
+    CREATE TABLE IF NOT EXISTS suppliers (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
   `);
 
@@ -98,6 +106,16 @@ export function initDatabase() {
     `);
     const seed = db.transaction((entries) => entries.forEach((entry) => insert.run(...entry)));
     seed(mockEntries);
+  }
+
+  const supplierCount = db.prepare("SELECT COUNT(*) as total FROM suppliers").get().total;
+  if (supplierCount === 0) {
+    const insertSupplier = db.prepare("INSERT OR IGNORE INTO suppliers (name) VALUES (?)");
+    const seedSuppliers = db.transaction((suppliers) => suppliers.forEach((supplier) => insertSupplier.run(supplier)));
+    seedSuppliers(defaultSuppliers);
+
+    const existingSuppliers = db.prepare("SELECT DISTINCT supplier FROM entries WHERE supplier IS NOT NULL AND supplier != ''").all();
+    seedSuppliers(existingSuppliers.map((row) => row.supplier));
   }
 
   return db;
