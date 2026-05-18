@@ -33,11 +33,6 @@ export function loadEnv() {
 
 export function getEnvValue(key, fallback = "") {
   const values = readEnvFile();
-  const source = String(process.env.APP_CONFIG_SOURCE || values.APP_CONFIG_SOURCE || "file").toLowerCase();
 
-  if (source === "env" || source === "environment") {
-    return process.env[key] ?? values[key] ?? fallback;
-  }
-
-  return values[key] ?? process.env[key] ?? fallback;
+  return process.env[key] ?? values[key] ?? fallback;
 }
