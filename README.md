@@ -57,6 +57,20 @@ npm run build
 npm start
 ```
 
+## Deploy e variaveis de ambiente
+
+Este projeto e full-stack: o frontend em `dist/` depende da API Express em `server/index.js`. Um deploy padrao da Netlify apenas com `npm run build` e publish em `dist` publica somente o frontend, entao rotas como `/api/login` e `/api/config` nao rodam e as variaveis `APP_PASSWORD_BASE64` e `APP_COMPANY_NAME` nao chegam ao backend.
+
+Para hospedar sem adaptar o codigo, use uma plataforma que rode Node.js persistente, como Render, Railway, Fly.io ou um VPS, e configure no ambiente do servidor:
+
+```text
+APP_PASSWORD_BASE64=<senhabase64>
+APP_COMPANY_NAME=Nome da Empresa
+NODE_ENV=production
+```
+
+Na Netlify, sera necessario converter a API para Netlify Functions e trocar o SQLite local por um banco persistente externo. Caso contrario, o site ate abre, mas login/configuracao/dados falham porque a API nao existe no deploy estatico.
+
 ## Funcionalidades
 
 - Cadastro de receitas e despesas com valor, data, descricao e categoria.

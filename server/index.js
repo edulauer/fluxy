@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import express from "express";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadEnv, readEnvFile } from "./env.js";
+import { getEnvValue, loadEnv } from "./env.js";
 import { initDatabase } from "./storage.js";
 
 loadEnv();
@@ -22,7 +22,7 @@ const categorySubtypes = {
 app.use(express.json());
 
 function getConfiguredPassword() {
-  const encoded = process.env.APP_PASSWORD_BASE64 || "";
+  const encoded = getEnvValue("APP_PASSWORD_BASE64");
   return Buffer.from(encoded, "base64").toString("utf8");
 }
 
@@ -136,9 +136,8 @@ app.get("/api/health", (_req, res) => {
 });
 
 app.get("/api/config", (_req, res) => {
-  const env = readEnvFile();
   res.json({
-    companyName: env.APP_COMPANY_NAME || process.env.APP_COMPANY_NAME || "Fluxo Simples"
+    companyName: getEnvValue("APP_COMPANY_NAME", "Fluxo Simples")
   });
 });
 
