@@ -39,7 +39,7 @@ DATABASE_URL=postgres://usuario:senha@localhost:5432/fluxy
 ```
 
 ```bash
-cd mini-finance-saas
+cd fluxy
 npm install
 docker compose up -d postgres
 npm run dev
