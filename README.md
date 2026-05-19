@@ -6,7 +6,7 @@ Mini SaaS web para controle financeiro empresarial, focado em lancar e visualiza
 
 - Frontend: React + Vite
 - Backend: Node.js + Express
-- Banco: SQLite com `better-sqlite3`
+- Banco: PostgreSQL com `pg`
 - Extras: exportacao CSV e dados mockados no primeiro start
 
 ## Estrutura
@@ -15,8 +15,7 @@ Mini SaaS web para controle financeiro empresarial, focado em lancar e visualiza
 mini-finance-saas/
   server/
     index.js          API HTTP e rotas de lancamentos
-    storage.js        inicializacao do SQLite e seed mockado
-    data/             banco local gerado automaticamente
+    storage.js        inicializacao do PostgreSQL e seed mockado
   src/
     components/       dashboard, formulario, categorias, filtros, lista e grafico
     utils/            formatadores de moeda e data
@@ -35,11 +34,14 @@ A senha padrao e o nome da empresa deve ser configurada em base64 no arquivo `.e
 ```text
 APP_PASSWORD_BASE64=<senhabase64>
 APP_COMPANY_NAME=Nome da Empresa
+DATABASE_URL=postgres://usuario:senha@localhost:5432/fluxy
+# DATABASE_SSL=true
 ```
 
 ```bash
 cd mini-finance-saas
 npm install
+docker compose up -d postgres
 npm run dev
 ```
 
@@ -47,6 +49,20 @@ Depois abra:
 
 - Frontend: `http://localhost:5173`
 - API: `http://localhost:3333/api/health`
+
+Para parar o banco local:
+
+```bash
+docker compose down
+```
+
+Para rodar tudo via Docker, incluindo o build e o servidor Node da aplicacao:
+
+```bash
+docker compose up --build
+```
+
+Depois abra `http://localhost:3333`.
 
 
 
@@ -66,10 +82,11 @@ Para hospedar sem adaptar o codigo, use uma plataforma que rode Node.js persiste
 ```text
 APP_PASSWORD_BASE64=<senhabase64>
 APP_COMPANY_NAME=Nome da Empresa
+DATABASE_URL=postgres://usuario:senha@host:5432/database
 NODE_ENV=production
 ```
 
-Na Netlify, sera necessario converter a API para Netlify Functions e trocar o SQLite local por um banco persistente externo. Caso contrario, o site ate abre, mas login/configuracao/dados falham porque a API nao existe no deploy estatico.
+Na Netlify, sera necessario converter a API para Netlify Functions ou usar outro runtime Node para a API. Caso contrario, o site ate abre, mas login/configuracao/dados falham porque a API nao existe no deploy estatico.
 
 ## Funcionalidades
 
@@ -85,7 +102,7 @@ Na Netlify, sera necessario converter a API para Netlify Functions e trocar o SQ
 
 ## Dados mockados
 
-Na primeira execucao, o SQLite e criado em `server/data/finance.sqlite` com exemplos como:
+Na primeira execucao, o schema do PostgreSQL e criado no banco configurado em `DATABASE_URL` com exemplos como:
 
 - Vendas no balcao
 - Compra de insumos
@@ -93,4 +110,4 @@ Na primeira execucao, o SQLite e criado em `server/data/finance.sqlite` com exem
 - Campanha local
 - Aluguel da loja
 
-Para resetar os dados, pare o servidor e remova o arquivo `server/data/finance.sqlite`.
+Para resetar os dados, limpe as tabelas `entries`, `categories` e `suppliers` no PostgreSQL ou recrie o banco configurado em `DATABASE_URL`.

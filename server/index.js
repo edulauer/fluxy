@@ -11,7 +11,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const app = express();
 const port = Number(process.env.PORT || 3333);
-const db = initDatabase();
+const db = await initDatabase();
 const sessionToken = crypto.randomBytes(32).toString("base64url");
 const stores = ["Geral", "Loja 1", "Loja 2"];
 const categorySubtypes = {
@@ -20,6 +20,10 @@ const categorySubtypes = {
 };
 
 app.use(express.json());
+
+function asyncHandler(handler) {
+  return (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
+}
 
 function getConfiguredPassword() {
   const encoded = getEnvValue("APP_PASSWORD_BASE64");
@@ -34,7 +38,7 @@ function requireAuth(req, res, next) {
   next();
 }
 
-function parseEntry(payload) {
+async function parseEntry(payload) {
   const value = Number(payload.value);
   const type = payload.type === "expense" ? "expense" : payload.type === "income" ? "income" : null;
   const date = String(payload.date || "").trim();
@@ -53,7 +57,7 @@ function parseEntry(payload) {
   if (paymentDate && !/^\d{4}-\d{2}-\d{2}$/.test(paymentDate)) return { error: "Data de pagamento invalida." };
   if (description.length < 2) return { error: "Descricao muito curta." };
   if (category.length < 2) return { error: "Categoria invalida." };
-  if (supplier && !db.prepare("SELECT id FROM suppliers WHERE name = ?").get(supplier)) return { error: "Fornecedor invalido." };
+  if (supplier && !(await db.get("SELECT id FROM suppliers WHERE name = $1", [supplier]))) return { error: "Fornecedor invalido." };
 
   return {
     data: {
@@ -108,8 +112,8 @@ function parseSupplier(payload) {
   return { data: { name } };
 }
 
-function getGroupedCategories() {
-  const rows = db.prepare("SELECT id, type, name, category_subtype as categorySubtype FROM categories ORDER BY type DESC, name ASC").all();
+async function getGroupedCategories() {
+  const rows = await db.all('SELECT id, type, name, category_subtype as "categorySubtype" FROM categories ORDER BY type DESC, name ASC');
   return rows.reduce(
     (acc, category) => {
       acc[category.type].push(category.name);
@@ -158,107 +162,103 @@ app.post("/api/login", (req, res) => {
 
 app.use("/api", requireAuth);
 
-app.get("/api/categories", (_req, res) => {
-  res.json(getGroupedCategories());
-});
+app.get("/api/categories", asyncHandler(async (_req, res) => {
+  res.json(await getGroupedCategories());
+}));
 
-app.get("/api/categories/list", (_req, res) => {
-  const rows = db
-    .prepare("SELECT id, type, name, category_subtype as categorySubtype, created_at as createdAt FROM categories ORDER BY type DESC, name ASC")
-    .all();
+app.get("/api/categories/list", asyncHandler(async (_req, res) => {
+  const rows = await db.all('SELECT id, type, name, category_subtype as "categorySubtype", created_at as "createdAt" FROM categories ORDER BY type DESC, name ASC');
   res.json(rows);
-});
+}));
 
-app.get("/api/suppliers", (_req, res) => {
-  const rows = db.prepare("SELECT id, name, created_at as createdAt FROM suppliers ORDER BY name ASC").all();
+app.get("/api/suppliers", asyncHandler(async (_req, res) => {
+  const rows = await db.all('SELECT id, name, created_at as "createdAt" FROM suppliers ORDER BY name ASC');
   res.json(rows);
-});
+}));
 
-app.post("/api/suppliers", (req, res) => {
+app.post("/api/suppliers", asyncHandler(async (req, res) => {
   const parsed = parseSupplier(req.body);
   if (parsed.error) return res.status(400).json({ error: parsed.error });
 
   try {
-    const result = db.prepare("INSERT INTO suppliers (name) VALUES (@name)").run(parsed.data);
-    const supplier = db.prepare("SELECT id, name, created_at as createdAt FROM suppliers WHERE id = ?").get(result.lastInsertRowid);
+    const supplier = await db.get('INSERT INTO suppliers (name) VALUES ($1) RETURNING id, name, created_at as "createdAt"', [parsed.data.name]);
     res.status(201).json(supplier);
   } catch (err) {
-    if (err.code === "SQLITE_CONSTRAINT_UNIQUE") {
+    if (err.code === "23505") {
       return res.status(409).json({ error: "Fornecedor ja cadastrado." });
     }
     throw err;
   }
-});
+}));
 
-app.delete("/api/suppliers/:id", (req, res) => {
+app.delete("/api/suppliers/:id", asyncHandler(async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) return res.status(400).json({ error: "ID invalido." });
 
-  const supplier = db.prepare("SELECT id, name FROM suppliers WHERE id = ?").get(id);
+  const supplier = await db.get("SELECT id, name FROM suppliers WHERE id = $1", [id]);
   if (!supplier) return res.status(404).json({ error: "Fornecedor nao encontrado." });
 
-  db.prepare("UPDATE entries SET supplier = '' WHERE supplier = ?").run(supplier.name);
-  db.prepare("DELETE FROM suppliers WHERE id = ?").run(id);
+  await db.transaction(async (tx) => {
+    await tx.run("UPDATE entries SET supplier = '' WHERE supplier = $1", [supplier.name]);
+    await tx.run("DELETE FROM suppliers WHERE id = $1", [id]);
+  });
   res.status(204).send();
-});
+}));
 
-app.post("/api/categories", (req, res) => {
+app.post("/api/categories", asyncHandler(async (req, res) => {
   const parsed = parseCategory(req.body);
   if (parsed.error) return res.status(400).json({ error: parsed.error });
 
   try {
-    const result = db.prepare("INSERT INTO categories (type, name, category_subtype) VALUES (@type, @name, @categorySubtype)").run(parsed.data);
-    const category = db
-      .prepare("SELECT id, type, name, category_subtype as categorySubtype, created_at as createdAt FROM categories WHERE id = ?")
-      .get(result.lastInsertRowid);
+    const category = await db.get(
+      'INSERT INTO categories (type, name, category_subtype) VALUES ($1, $2, $3) RETURNING id, type, name, category_subtype as "categorySubtype", created_at as "createdAt"',
+      [parsed.data.type, parsed.data.name, parsed.data.categorySubtype]
+    );
     res.status(201).json(category);
   } catch (err) {
-    if (err.code === "SQLITE_CONSTRAINT_UNIQUE") {
+    if (err.code === "23505") {
       return res.status(409).json({ error: "Categoria ja cadastrada para este tipo." });
     }
     throw err;
   }
-});
+}));
 
-app.delete("/api/categories/:id", (req, res) => {
+app.delete("/api/categories/:id", asyncHandler(async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) return res.status(400).json({ error: "ID invalido." });
 
-  const category = db.prepare("SELECT id, type, name FROM categories WHERE id = ?").get(id);
+  const category = await db.get("SELECT id, type, name FROM categories WHERE id = $1", [id]);
   if (!category) return res.status(404).json({ error: "Categoria nao encontrada." });
 
-  const deleteCategory = db.transaction((currentCategory) => {
-    const fallbackSubtype = currentCategory.type === "income" ? "Receita Nao-Operacional" : "Despesa Variavel";
-    db.prepare("INSERT OR IGNORE INTO categories (type, name, category_subtype) VALUES (?, ?, ?)").run(currentCategory.type, "Outros", fallbackSubtype);
-    db.prepare("UPDATE entries SET category = ? WHERE type = ? AND category = ?").run(
-      "Outros",
-      currentCategory.type,
-      currentCategory.name
+  await db.transaction(async (tx) => {
+    const fallbackSubtype = category.type === "income" ? "Receita Nao-Operacional" : "Despesa Variavel";
+    await tx.run(
+      "INSERT INTO categories (type, name, category_subtype) VALUES ($1, $2, $3) ON CONFLICT (type, name) DO NOTHING",
+      [category.type, "Outros", fallbackSubtype]
     );
-    db.prepare("DELETE FROM categories WHERE id = ?").run(currentCategory.id);
+    await tx.run("UPDATE entries SET category = $1 WHERE type = $2 AND category = $3", ["Outros", category.type, category.name]);
+    await tx.run("DELETE FROM categories WHERE id = $1", [category.id]);
   });
 
-  deleteCategory(category);
   res.status(204).send();
-});
+}));
 
-app.get("/api/dashboard/category-summary", (req, res) => {
+app.get("/api/dashboard/category-summary", asyncHandler(async (req, res) => {
   const month = parseMonth(req.query.month);
-  const rows = db
-    .prepare(
-      `
+  const rows = await db.all(
+    `
         SELECT
           type,
           category,
-          SUM(value) as total
+          SUM(value)::float as total
         FROM entries
-        WHERE date >= date(? || '-01')
-          AND date < date(? || '-01', '+1 month')
+        WHERE date >= ($1 || '-01')::date
+          AND date < (($2 || '-01')::date + interval '1 month')
         GROUP BY type, category
         ORDER BY type DESC, total DESC
-      `
-    )
-    .all(month, month);
+      `,
+    [month, month]
+  );
 
   const summary = {
     month,
@@ -276,40 +276,37 @@ app.get("/api/dashboard/category-summary", (req, res) => {
   }
 
   res.json(summary);
-});
+}));
 
-app.get("/api/accounts-payable", (_req, res) => {
-  const rows = db
-    .prepare(
-      `
+app.get("/api/accounts-payable", asyncHandler(async (_req, res) => {
+  const rows = await db.all(
+    `
         SELECT
           id,
           type,
-          value,
-          date,
+          value::float as value,
+          date::text as date,
           description,
           category,
           store,
-          due_date as dueDate,
-          payment_date as paymentDate,
-          employee_name as employeeName,
+          due_date::text as "dueDate",
+          payment_date::text as "paymentDate",
+          employee_name as "employeeName",
           supplier,
-          created_at as createdAt
+          created_at as "createdAt"
         FROM entries
         WHERE type = 'expense'
-          AND (payment_date IS NULL OR payment_date = '')
+          AND payment_date IS NULL
           AND due_date IS NOT NULL
-          AND due_date != ''
-          AND due_date <= date('now')
+          AND due_date <= CURRENT_DATE
         ORDER BY due_date DESC, id DESC
       `
-    )
-    .all();
+  );
 
   res.json(rows);
-});
+}));
 
-app.get("/api/entries", (req, res) => {
+app.get("/api/entries", asyncHandler(async (req, res) => {
   const { type = "all" } = req.query;
   const month = parseMonth(req.query.month);
   const params = [month, month];
@@ -317,166 +314,161 @@ app.get("/api/entries", (req, res) => {
     SELECT
       id,
       type,
-      value,
-      date,
+      value::float as value,
+      date::text as date,
       description,
       category,
       store,
-      due_date as dueDate,
-      payment_date as paymentDate,
-      employee_name as employeeName,
+      due_date::text as "dueDate",
+      payment_date::text as "paymentDate",
+      employee_name as "employeeName",
       supplier,
-      created_at as createdAt
+      created_at as "createdAt"
     FROM entries
-    WHERE date >= date(? || '-01')
-      AND date < date(? || '-01', '+1 month')
+    WHERE date >= ($1 || '-01')::date
+      AND date < (($2 || '-01')::date + interval '1 month')
   `;
 
   if (type === "income" || type === "expense") {
-    sql += " AND type = ?";
+    sql += " AND type = $3";
     params.push(type);
   }
 
   sql += " ORDER BY date DESC, id DESC";
-  res.json(db.prepare(sql).all(...params));
-});
+  res.json(await db.all(sql, params));
+}));
 
-app.post("/api/entries", (req, res) => {
-  const parsed = parseEntry(req.body);
+app.post("/api/entries", asyncHandler(async (req, res) => {
+  const parsed = await parseEntry(req.body);
   if (parsed.error) return res.status(400).json({ error: parsed.error });
   const recurrence = parsed.data.type === "expense" ? parseRecurrence(req.body) : { data: { recurrence: 1, intervalDays: 0 } };
   if (recurrence.error) return res.status(400).json({ error: recurrence.error });
 
-  const insert = db.prepare(
-    `
-      INSERT INTO entries (
-        type,
-        value,
-        date,
-        description,
-        category,
-        store,
-        due_date,
-        payment_date,
-        employee_name,
-        supplier
-      )
-      VALUES (
-        @type,
-        @value,
-        @date,
-        @description,
-        @category,
-        @store,
-        @dueDate,
-        @paymentDate,
-        @employeeName,
-        @supplier
-      )
-    `
-  );
-
-  const createEntries = db.transaction((entry, options) => {
+  const ids = await db.transaction(async (tx) => {
     const ids = [];
-    for (let index = 0; index < options.recurrence; index += 1) {
-      const offset = index * options.intervalDays;
-      const result = insert.run({
-        ...entry,
-        date: addDays(entry.date, offset),
-        dueDate: addDays(entry.dueDate, offset),
-        paymentDate: addDays(entry.paymentDate, offset)
-      });
-      ids.push(result.lastInsertRowid);
+    for (let index = 0; index < recurrence.data.recurrence; index += 1) {
+      const offset = index * recurrence.data.intervalDays;
+      const result = await tx.get(
+        `
+          INSERT INTO entries (
+            type,
+            value,
+            date,
+            description,
+            category,
+            store,
+            due_date,
+            payment_date,
+            employee_name,
+            supplier
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+          RETURNING id
+        `,
+        [
+          parsed.data.type,
+          parsed.data.value,
+          addDays(parsed.data.date, offset),
+          parsed.data.description,
+          parsed.data.category,
+          parsed.data.store,
+          addDays(parsed.data.dueDate, offset),
+          addDays(parsed.data.paymentDate, offset),
+          parsed.data.employeeName,
+          parsed.data.supplier
+        ]
+      );
+      ids.push(result.id);
     }
     return ids;
   });
 
-  const ids = createEntries(parsed.data, recurrence.data);
-
-  const entries = db
-    .prepare(
-      `
+  const entries = await db.all(
+    `
         SELECT
           id,
           type,
-          value,
-          date,
+          value::float as value,
+          date::text as date,
           description,
           category,
           store,
-          due_date as dueDate,
-          payment_date as paymentDate,
-          employee_name as employeeName,
+          due_date::text as "dueDate",
+          payment_date::text as "paymentDate",
+          employee_name as "employeeName",
           supplier,
-          created_at as createdAt
+          created_at as "createdAt"
         FROM entries
-        WHERE id IN (${ids.map(() => "?").join(",")})
+        WHERE id = ANY($1::int[])
         ORDER BY id ASC
-      `
-    )
-    .all(...ids);
+      `,
+    [ids]
+  );
   res.status(201).json(recurrence.data.recurrence === 1 ? entries[0] : entries);
-});
+}));
 
-app.put("/api/entries/:id", (req, res) => {
+app.put("/api/entries/:id", asyncHandler(async (req, res) => {
   const id = Number(req.params.id);
-  const parsed = parseEntry(req.body);
+  const parsed = await parseEntry(req.body);
   if (!Number.isInteger(id)) return res.status(400).json({ error: "ID invalido." });
   if (parsed.error) return res.status(400).json({ error: parsed.error });
 
-  const result = db
-    .prepare(
-      `
+  const entry = await db.get(
+    `
         UPDATE entries
         SET
-          type = @type,
-          value = @value,
-          date = @date,
-          description = @description,
-          category = @category,
-          store = @store,
-          due_date = @dueDate,
-          payment_date = @paymentDate,
-          employee_name = @employeeName,
-          supplier = @supplier
-        WHERE id = @id
-      `
-    )
-    .run({ ...parsed.data, id });
-
-  if (result.changes === 0) return res.status(404).json({ error: "Lancamento nao encontrado." });
-  const entry = db
-    .prepare(
-      `
-        SELECT
+          type = $1,
+          value = $2,
+          date = $3,
+          description = $4,
+          category = $5,
+          store = $6,
+          due_date = $7,
+          payment_date = $8,
+          employee_name = $9,
+          supplier = $10
+        WHERE id = $11
+        RETURNING
           id,
           type,
-          value,
-          date,
+          value::float as value,
+          date::text as date,
           description,
           category,
           store,
-          due_date as dueDate,
-          payment_date as paymentDate,
-          employee_name as employeeName,
+          due_date::text as "dueDate",
+          payment_date::text as "paymentDate",
+          employee_name as "employeeName",
           supplier,
-          created_at as createdAt
-        FROM entries
-        WHERE id = ?
-      `
-    )
-    .get(id);
-  res.json(entry);
-});
+          created_at as "createdAt"
+      `,
+    [
+      parsed.data.type,
+      parsed.data.value,
+      parsed.data.date,
+      parsed.data.description,
+      parsed.data.category,
+      parsed.data.store,
+      parsed.data.dueDate,
+      parsed.data.paymentDate,
+      parsed.data.employeeName,
+      parsed.data.supplier,
+      id
+    ]
+  );
 
-app.delete("/api/entries/:id", (req, res) => {
+  if (!entry) return res.status(404).json({ error: "Lancamento nao encontrado." });
+  res.json(entry);
+}));
+
+app.delete("/api/entries/:id", asyncHandler(async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) return res.status(400).json({ error: "ID invalido." });
 
-  const result = db.prepare("DELETE FROM entries WHERE id = ?").run(id);
+  const result = await db.run("DELETE FROM entries WHERE id = $1", [id]);
   if (result.changes === 0) return res.status(404).json({ error: "Lancamento nao encontrado." });
   res.status(204).send();
-});
+}));
 
 if (process.env.NODE_ENV === "production") {
   const distPath = path.join(__dirname, "..", "dist");
