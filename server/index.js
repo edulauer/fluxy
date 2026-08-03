@@ -12,14 +12,30 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const port = Number(process.env.PORT || 3333);
 const db = await initDatabase();
-const sessionToken = crypto.randomBytes(32).toString("base64url");
+const sessionCookieName = "fluxy_session";
+const sessionTtlHours = Math.min(Math.max(Number(getEnvValue("SESSION_TTL_HOURS", "8")) || 8, 1), 168);
+const sessionTtlMs = sessionTtlHours * 60 * 60 * 1000;
+const secureSessionCookie = getEnvValue("SESSION_COOKIE_SECURE", process.env.NODE_ENV === "production" ? "true" : "false") === "true";
+const loginAttempts = new Map();
+const loginWindowMs = 15 * 60 * 1000;
+const maxLoginAttempts = 5;
+const maxTrackedLoginIps = 10000;
 const stores = ["Geral", "Loja 1", "Loja 2"];
 const categorySubtypes = {
   income: ["Receita Operacional", "Receita Nao-Operacional"],
   expense: ["Despesa Fixa", "Despesa Variavel"]
 };
 
-app.use(express.json());
+if (getEnvValue("TRUST_PROXY", "false") === "true") {
+  app.set("trust proxy", 1);
+}
+
+app.disable("x-powered-by");
+app.use(express.json({ limit: "100kb" }));
+app.use("/api", (_req, res, next) => {
+  res.set("Cache-Control", "no-store");
+  next();
+});
 
 function asyncHandler(handler) {
   return (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
@@ -30,12 +46,76 @@ function getConfiguredPassword() {
   return Buffer.from(encoded, "base64").toString("utf8");
 }
 
-function requireAuth(req, res, next) {
-  const token = req.get("authorization")?.replace(/^Bearer\s+/i, "");
-  if (token !== sessionToken) {
-    return res.status(401).json({ error: "Sessao expirada. Faca login novamente." });
+function hashValue(value) {
+  return crypto.createHash("sha256").update(value).digest("hex");
+}
+
+function safeEqual(left, right) {
+  return crypto.timingSafeEqual(
+    crypto.createHash("sha256").update(left).digest(),
+    crypto.createHash("sha256").update(right).digest()
+  );
+}
+
+function getCookie(req, name) {
+  const cookies = String(req.get("cookie") || "").split(";");
+  for (const cookie of cookies) {
+    const separator = cookie.indexOf("=");
+    if (separator === -1) continue;
+    if (cookie.slice(0, separator).trim() === name) {
+      return decodeURIComponent(cookie.slice(separator + 1).trim());
+    }
   }
-  next();
+  return "";
+}
+
+function sessionCookie(token, maxAgeSeconds) {
+  const parts = [
+    `${sessionCookieName}=${encodeURIComponent(token)}`,
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Strict",
+    `Max-Age=${maxAgeSeconds}`
+  ];
+  if (secureSessionCookie) parts.push("Secure");
+  return parts.join("; ");
+}
+
+function getLoginAttempt(req) {
+  const now = Date.now();
+  const key = req.ip;
+  const attempt = loginAttempts.get(key);
+  if (!attempt || attempt.resetAt <= now) {
+    if (loginAttempts.size >= maxTrackedLoginIps) {
+      for (const [trackedIp, trackedAttempt] of loginAttempts) {
+        if (trackedAttempt.resetAt <= now) loginAttempts.delete(trackedIp);
+      }
+      if (loginAttempts.size >= maxTrackedLoginIps) {
+        loginAttempts.delete(loginAttempts.keys().next().value);
+      }
+    }
+    const nextAttempt = { count: 0, resetAt: now + loginWindowMs };
+    loginAttempts.set(key, nextAttempt);
+    return nextAttempt;
+  }
+  return attempt;
+}
+
+function requireAuth(req, res, next) {
+  const token = getCookie(req, sessionCookieName);
+  if (!token) return res.status(401).json({ error: "Sessao expirada. Faca login novamente." });
+
+  const tokenHash = hashValue(token);
+  db.get("SELECT token_hash FROM app_sessions WHERE token_hash = $1 AND expires_at > CURRENT_TIMESTAMP", [tokenHash])
+    .then((session) => {
+      if (!session) {
+        res.set("Set-Cookie", sessionCookie("", 0));
+        return res.status(401).json({ error: "Sessao expirada. Faca login novamente." });
+      }
+      req.sessionTokenHash = tokenHash;
+      next();
+    })
+    .catch(next);
 }
 
 async function parseEntry(payload) {
@@ -145,7 +225,14 @@ app.get("/api/config", (_req, res) => {
   });
 });
 
-app.post("/api/login", (req, res) => {
+app.post("/api/login", asyncHandler(async (req, res) => {
+  const attempt = getLoginAttempt(req);
+  if (attempt.count >= maxLoginAttempts) {
+    const retryAfter = Math.max(Math.ceil((attempt.resetAt - Date.now()) / 1000), 1);
+    res.set("Retry-After", String(retryAfter));
+    return res.status(429).json({ error: "Muitas tentativas. Tente novamente mais tarde." });
+  }
+
   const password = String(req.body.password || "");
   const configuredPassword = getConfiguredPassword();
 
@@ -153,14 +240,34 @@ app.post("/api/login", (req, res) => {
     return res.status(500).json({ error: "Senha do aplicativo nao configurada." });
   }
 
-  if (password !== configuredPassword) {
+  if (!safeEqual(password, configuredPassword)) {
+    attempt.count += 1;
     return res.status(401).json({ error: "Senha invalida." });
   }
 
-  res.json({ token: sessionToken });
-});
+  loginAttempts.delete(req.ip);
+  const token = crypto.randomBytes(32).toString("base64url");
+  const expiresAt = new Date(Date.now() + sessionTtlMs);
+  await db.transaction(async (tx) => {
+    await tx.run("DELETE FROM app_sessions WHERE expires_at <= CURRENT_TIMESTAMP");
+    await tx.run("INSERT INTO app_sessions (token_hash, expires_at) VALUES ($1, $2)", [hashValue(token), expiresAt]);
+  });
+
+  res.set("Set-Cookie", sessionCookie(token, Math.floor(sessionTtlMs / 1000)));
+  res.json({ authenticated: true, expiresAt: expiresAt.toISOString() });
+}));
 
 app.use("/api", requireAuth);
+
+app.get("/api/session", (_req, res) => {
+  res.json({ authenticated: true });
+});
+
+app.post("/api/logout", asyncHandler(async (req, res) => {
+  await db.run("DELETE FROM app_sessions WHERE token_hash = $1", [req.sessionTokenHash]);
+  res.set("Set-Cookie", sessionCookie("", 0));
+  res.status(204).send();
+}));
 
 app.get("/api/categories", asyncHandler(async (_req, res) => {
   res.json(await getGroupedCategories());

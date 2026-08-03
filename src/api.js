@@ -1,21 +1,17 @@
 const headers = { "Content-Type": "application/json" };
-const tokenKey = "financeAuthToken";
 
-async function request(path, options = {}) {
-  const token = localStorage.getItem(tokenKey);
-  const authHeaders = token ? { Authorization: `Bearer ${token}` } : {};
+async function request(path, options = {}, notifyUnauthorized = true) {
   const response = await fetch(path, {
     ...options,
+    credentials: "same-origin",
     headers: {
-      ...authHeaders,
       ...(options.headers || {})
     }
   });
   if (response.status === 204) return null;
 
   const body = await response.json();
-  if (response.status === 401) {
-    localStorage.removeItem(tokenKey);
+  if (response.status === 401 && notifyUnauthorized) {
     window.dispatchEvent(new Event("finance:logout"));
   }
 
@@ -26,22 +22,20 @@ async function request(path, options = {}) {
   return body;
 }
 
-export function getStoredToken() {
-  return localStorage.getItem(tokenKey);
-}
-
 export async function login(password) {
-  const data = await request("/api/login", {
+  return request("/api/login", {
     method: "POST",
     headers,
     body: JSON.stringify({ password })
-  });
-  localStorage.setItem(tokenKey, data.token);
-  return data;
+  }, false);
 }
 
 export function logout() {
-  localStorage.removeItem(tokenKey);
+  return request("/api/logout", { method: "POST" });
+}
+
+export function getSession() {
+  return request("/api/session", {}, false);
 }
 
 export function getConfig() {

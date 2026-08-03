@@ -36,6 +36,9 @@ APP_PASSWORD_BASE64=<senhabase64>
 APP_COMPANY_NAME=Nome da Empresa
 DATABASE_URL=postgres://usuario:senha@localhost:5432/fluxy
 # DATABASE_SSL=true
+# SESSION_TTL_HOURS=8
+# Use false somente no desenvolvimento HTTP local:
+# SESSION_COOKIE_SECURE=false
 ```
 
 ```bash
@@ -84,7 +87,14 @@ APP_PASSWORD_BASE64=<senhabase64>
 APP_COMPANY_NAME=Nome da Empresa
 DATABASE_URL=postgres://usuario:senha@host:5432/database
 NODE_ENV=production
+SESSION_TTL_HOURS=8
+SESSION_COOKIE_SECURE=true
+# TRUST_PROXY=true # quando houver exatamente um reverse proxy na frente da aplicacao
 ```
+
+A autenticacao usa uma senha global e cria sessoes individuais persistidas no
+PostgreSQL. Em producao, publique a aplicacao apenas por HTTPS para que o cookie
+de sessao `HttpOnly`, `Secure` e `SameSite=Strict` seja enviado pelo navegador.
 
 Na Netlify, sera necessario converter a API para Netlify Functions ou usar outro runtime Node para a API. Caso contrario, o site ate abre, mas login/configuracao/dados falham porque a API nao existe no deploy estatico.
 

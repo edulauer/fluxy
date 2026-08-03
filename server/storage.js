@@ -185,6 +185,15 @@ export async function initDatabase() {
       name TEXT NOT NULL UNIQUE,
       created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS app_sessions (
+      token_hash CHAR(64) PRIMARY KEY,
+      expires_at TIMESTAMPTZ NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS app_sessions_expires_at_idx
+      ON app_sessions (expires_at);
   `);
 
   if (!(await hasColumn(db, "categories", "category_subtype"))) {

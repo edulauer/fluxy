@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { createEntry, deleteEntry, getAccountsPayable, getCategories, getConfig, getEntries, getStoredToken, getSuppliers, login, logout, updateEntry } from "./api.js";
+import { createEntry, deleteEntry, getAccountsPayable, getCategories, getConfig, getEntries, getSession, getSuppliers, login, logout, updateEntry } from "./api.js";
 import AccountsPayable from "./components/AccountsPayable.jsx";
 import CategoryManager from "./components/CategoryManager.jsx";
 import CategoryPieDashboard from "./components/CategoryPieDashboard.jsx";
@@ -17,7 +17,8 @@ function formatForCsv(value) {
 }
 
 export default function App() {
-  const [authenticated, setAuthenticated] = useState(Boolean(getStoredToken()));
+  const [authenticated, setAuthenticated] = useState(false);
+  const [authLoading, setAuthLoading] = useState(true);
   const [companyName, setCompanyName] = useState("Fluxo Simples");
   const [entries, setEntries] = useState([]);
   const [accountsPayable, setAccountsPayable] = useState([]);
@@ -83,6 +84,11 @@ export default function App() {
     getConfig()
       .then((config) => setCompanyName(config.companyName || "Fluxo Simples"))
       .catch(() => setCompanyName("Fluxo Simples"));
+
+    getSession()
+      .then(() => setAuthenticated(true))
+      .catch(() => setAuthenticated(false))
+      .finally(() => setAuthLoading(false));
 
     window.addEventListener("finance:logout", handleLogout);
     return () => window.removeEventListener("finance:logout", handleLogout);
@@ -179,8 +185,12 @@ export default function App() {
     }
   }
 
-  function handleLogout() {
-    logout();
+  async function handleLogout() {
+    try {
+      await logout();
+    } catch {
+      // The local state must still be cleared if the session already expired.
+    }
     setAuthenticated(false);
     setEntries([]);
     setAccountsPayable([]);
@@ -188,6 +198,14 @@ export default function App() {
     setSuppliers([]);
     setPage("home");
     setEditingEntry(null);
+  }
+
+  if (authLoading) {
+    return (
+      <main className="login-shell">
+        <section className="login-panel">Carregando...</section>
+      </main>
+    );
   }
 
   if (!authenticated) {
